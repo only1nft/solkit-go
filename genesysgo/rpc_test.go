@@ -30,3 +30,10 @@ func TestNewRPCClientMainNetBetaWithToken(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, res)
 }
+
+func TestGetToken(t *testing.T) {
+	token, err := genesysgo.GetToken(context.TODO(), os.Getenv("GENESYSGO_TOKEN"))
+	assert.NoError(t, err)
+	assert.NotNil(t, token)
+	assert.True(t, token.Valid())
+}

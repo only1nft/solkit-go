@@ -1,6 +1,7 @@
 package genesysgo
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/klauspost/compress/gzhttp"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
@@ -73,7 +75,19 @@ func decodeAuthToken(b64Token string) (*clientcredentials.Config, error) {
 	}, nil
 }
 
-// See 2 (end of page 4) https://www.ietf.org/rfc/rfc2617.txt
+// RFC2617
+// authToken - clientID:clientSecret encoded in base64
+// Please use the following instruction in order to generate a new token:
+// https://genesysgo.medium.com/a-primer-to-genesysgo-network-auth-a3c678a9dc2a
+func GetToken(ctx context.Context, authToken string) (*oauth2.Token, error) {
+	cfg, err := decodeAuthToken(authToken)
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Token(ctx)
+}
+
+// RFC2617
 // authToken - clientID:clientSecret encoded in base64
 // Please use the following instruction in order to generate a new token:
 // https://genesysgo.medium.com/a-primer-to-genesysgo-network-auth-a3c678a9dc2a
