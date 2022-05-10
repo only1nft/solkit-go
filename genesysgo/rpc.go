@@ -1,67 +1,93 @@
 package genesysgo
 
 import (
+	"encoding/base64"
+	"errors"
 	"net"
 	"net/http"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/gagliardetto/solana-go/rpc/jsonrpc"
 	"github.com/klauspost/compress/gzhttp"
+	"golang.org/x/oauth2/clientcredentials"
 )
 
 var (
-	TokenLifetime              = 5 * time.Minute
+	TokenURL                   = "https://auth.genesysgo.net/auth/realms/RPCs/protocol/openid-connect/token"
 	defaultMaxIdleConnsPerHost = 20
 	defaultTimeout             = 5 * time.Minute
 	defaultKeepAlive           = 3 * time.Minute
+
+	MainNetBeta = rpc.Cluster{
+		Name: rpc.MainNetBeta.Name,
+		RPC:  "https://only1.genesysgo.net",
+		WS:   "ws://only1.genesysgo.net",
+	}
+
+	DevNet = rpc.Cluster{
+		Name: rpc.DevNet.Name,
+		RPC:  "https://psytrbhymqlkfrhudd.dev.genesysgo.net:8899",
+		WS:   "ws://psytrbhymqlkfrhudd.dev.genesysgo.net:8899",
+	}
+
+	ErrInvalidToken = errors.New("invalid token")
 )
 
 type roundTripper struct {
+	clientcredentials.Config
 	next http.RoundTripper
-
-	mu           sync.Mutex
-	refreshToken string
-	accessToken  string
-	fetchedAt    time.Time
 }
 
-func newRoundTripper(refreshToken string, next http.RoundTripper) *roundTripper {
-	return &roundTripper{next: next, refreshToken: refreshToken}
+func newRoundTripper(cfg clientcredentials.Config, next http.RoundTripper) *roundTripper {
+	out := roundTripper{next: next, Config: cfg}
+	return &out
 }
 
 func (rt *roundTripper) RoundTrip(req *http.Request) (resp *http.Response, err error) {
-	if rt.refreshToken == "" {
-		return rt.next.RoundTrip(req)
-	}
-	if err := func() error {
-		rt.mu.Lock()
-		defer rt.mu.Unlock()
-		if rt.accessToken == "" || rt.fetchedAt.Add(TokenLifetime).Before(time.Now()) {
-			now := time.Now()
-			token, err := GetAccessToken(req.Context(), rt.refreshToken)
-			if err != nil {
-				return err
-			}
-			rt.accessToken = token.AccessToken
-			rt.fetchedAt = now
-		}
-
-		if rt.accessToken != "" {
-			req.Header.Add("Authorization", "Bearer "+rt.accessToken)
-		}
-		return nil
-	}(); err != nil {
+	token, err := rt.Token(req.Context())
+	if err != nil {
 		return nil, err
 	}
+	token.SetAuthHeader(req)
 	return rt.next.RoundTrip(req)
 }
 
-func NewRPCClient(endpoint string, refreshToken string) *rpc.Client {
+func decodeAuthToken(b64Token string) (*clientcredentials.Config, error) {
+	if b64Token == "" {
+		return nil, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(b64Token)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	s := strings.SplitN(string(decoded), ":", 2)
+	if len(s) != 2 {
+		return nil, ErrInvalidToken
+	}
+	return &clientcredentials.Config{
+		ClientID:     s[0],
+		TokenURL:     TokenURL,
+		ClientSecret: s[1],
+	}, nil
+}
+
+// See 2 (end of page 4) https://www.ietf.org/rfc/rfc2617.txt
+// authToken - clientID:clientSecret encoded in base64
+// Please use the following instruction in order to generate a new token:
+// https://genesysgo.medium.com/a-primer-to-genesysgo-network-auth-a3c678a9dc2a
+func NewRPCClient(endpoint string, authToken string) *rpc.Client {
+	if authToken == "" {
+		return rpc.New(endpoint)
+	}
+	cfg, err := decodeAuthToken(authToken)
+	if err != nil {
+		panic(err)
+	}
 	httpClient := http.Client{
 		Timeout: defaultTimeout,
-		Transport: newRoundTripper(refreshToken, gzhttp.Transport(&http.Transport{
+		Transport: newRoundTripper(*cfg, gzhttp.Transport(&http.Transport{
 			MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
 			DialContext: (&net.Dialer{
 				Timeout:   defaultTimeout,
