@@ -80,6 +80,9 @@ func decodeAuthToken(b64Token string) (*clientcredentials.Config, error) {
 // Please use the following instruction in order to generate a new token:
 // https://genesysgo.medium.com/a-primer-to-genesysgo-network-auth-a3c678a9dc2a
 func GetToken(ctx context.Context, authToken string) (*oauth2.Token, error) {
+	if authToken == "" {
+		return nil, nil
+	}
 	cfg, err := decodeAuthToken(authToken)
 	if err != nil {
 		return nil, err
